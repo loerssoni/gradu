@@ -48,38 +48,42 @@ crsp$date <- as.Date(as.character(crsp$date), '%Y%m%d')
 
 # set formation period for calculating momentum, these can be changed
 # to rerun for alternative strategy specifications in robustness checks
-skip_crsp <- 1
-horizon_crsp <- 12
 
 
-
+crspset_create <- function(crsp, skip_crsp = 1, horizon_crsp = 12, winsorize = FALSE){
 #form momentum variable (right now, filtering missing returns)
-crspset <- crsp %>%
-  filter(ret>-1.1)%>%
-  group_by(permno)%>%
-  mutate(tri = cumprod(1+ret),
-         mom = dplyr::lag(tri, 1+skip_crsp)/dplyr::lag(tri, horizon_crsp+1)-1,
-         )%>%
-  select(-tri)%>%
-  filter(!is.na(mom))%>%
-  ungroup()%>%
-  filter(!is.na(mv))%>%
-  group_by(date)%>%
-  mutate(mv_m=quantile(mv, 0.5),
-         mv_2 = quantile(mv, 0.2))%>%
-  ungroup()%>%
-  filter(mv >= mv_2)
-  # optionally: winsorize returns
-  #mutate(mom=Winsorize(mom, probs=c(0.05,0.95), na.rm=T))%>%
-  #mutate(ret=Winsorize(ret, probs=c(0.05,0.95), na.rm=T))
+  crspset <- crsp %>%
+    filter(ret>-1.1)%>%
+    group_by(permno)%>%
+    mutate(tri = cumprod(1+ret),
+           mom = dplyr::lag(tri, 1+skip_crsp)/dplyr::lag(tri, horizon_crsp+1)-1,
+           )%>%
+    select(-tri)%>%
+    filter(!is.na(mom))%>%
+    ungroup()%>%
+    filter(!is.na(mv))%>%
+    group_by(date)%>%
+    mutate(mv_m=quantile(mv, 0.5),
+           mv_2 = quantile(mv, 0.2))%>%
+    ungroup()%>%
+    filter(mv >= mv_2)
+  if (winsorize == TRUE) {
+    crspset <- crspset %>%
+       mutate(mom=Winsorize(mom, probs=c(0.05,0.95), na.rm=T))%>%
+       mutate(ret=Winsorize(ret, probs=c(0.05,0.95), na.rm=T))
+  }
+  return(crspset)
+}
+
+#for this run, do default settings
+crspset <- crspset_create(crsp)
 
 #check how many observations we have
 length(unique(crspset2$permno))
 
-# spread data into set with separate columns for return and momentum for each
+# spread data into a wide dataframe with separate columns for return and momentum for each
 # permno, used later for the decomposition estimation
 pfs<- as.data.frame(dcast(setDT(crspset), date ~ permno, value.var = c('ret', 'mom')))
-
 
 
 ########################################
@@ -115,7 +119,7 @@ port_ret <- strat_is %>%
 
 
 returns <- cbind(t.test(port_ret$ret*100*12)$estimate, t.test(port_ret$ret*100*12)$statistic)
-
+print(returns)
 #a little plot as a sanity check
 plot(log(cumprod(1+port_ret$ret))~port_ret$date, type='l', col='red')
 crashes <- port_ret$date[which(port_ret$ret < -0.2)];crashes
@@ -389,31 +393,13 @@ crsp <- crsp[,c(1,2,5,6)]
 names(crsp) <- c('permno', 'date', 'mv', 'ret')
 crsp$date <- as.Date(as.character(crsp$date), '%Y%m%d')
 
-# Set formation period for calculating momentum
-skip_crsp <- 1
-horizon_crsp <- 12
-
-#Form momentum (right now, filtering missing returns)
-crspset <- crsp %>%
-  filter(ret>-1.1)%>%
-  group_by(permno)%>%
-  filter(!is.na(ret))%>%
-  mutate(tri = cumprod(1+ret),
-         mom = dplyr::lag(tri, 1+skip_crsp)/dplyr::lag(tri, horizon_crsp+1)-1,
-         l = nrow(as.matrix(ret))
-  )%>%
-  select(-tri)%>%
-  filter(!is.na(mom))%>%
-  ungroup()#%>%
-  #To check for momentum returns in winsorized returns
-  #mutate(mom=Winsorize(mom, probs=c(0.05,0.95), na.rm=T))%>%
-  #mutate(ret=Winsorize(ret, probs=c(0.05,0.95), na.rm=T))
-
-
+crspset <- crspset_create(crsp)
 
 #Function for computing strategy based decomposition for individual stocks and portfolio data
-#Rerun for different specifications in robustness checks
+#This part is rerun for different specifications in robustness checks
 strat_decompose <- function(dset, port=F, skip_crsp=1, horizon_crsp=12){
+  
+  #the portfolio datasets need some additional wrangling here
   if(port==T){
     
     dset <- gather(dset, permno, ret, -date)
@@ -426,6 +412,7 @@ strat_decompose <- function(dset, port=F, skip_crsp=1, horizon_crsp=12){
       select(-tri, -group_row)%>%
       ungroup()
   }
+  
   strat_is <- dset %>%
     group_by(permno)%>%
     mutate(ind = row_number(),
@@ -488,6 +475,7 @@ strat_decompose <- function(dset, port=F, skip_crsp=1, horizon_crsp=12){
   
   
   port_ret <- strat_is%>%
+  #alternatively filter different time periods
     #filter(date > as.Date('19391231', '%Y%m%d'))%>%
     #filter(date >= as.Date('19901231', '%Y%m%d'))%>%
     #filter(date > 194512)%>%
